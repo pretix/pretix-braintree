@@ -1,0 +1,3 @@
+recursive-include pretix_braintree/static *
+recursive-include pretix_braintree/templates *
+recursive-include pretix_braintree/locale *
