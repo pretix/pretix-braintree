@@ -1,0 +1,51 @@
+{% load i18n %}
+{% load compress %}
+{% load staticfiles %}
+
+<div class="form-horizontal">
+    <div class="braintree-errors sr-only">
+
+    </div>
+    <noscript>
+        <div class="alert alert-warning">
+            {% trans "For a credit card payment, please turn on JavaScript." %}
+        </div>
+    </noscript>
+    <div class="form-group braintree-number">
+        <label class="control-label col-sm-3">
+            {% trans "Credit card number" %}
+        </label>
+        <div class="col-sm-4">
+            <div class="hosted-field form-control" id="bt-card-number"></div>
+        </div>
+    </div>
+    <div class="form-group braintree-exp">
+        <label class="control-label col-sm-3">
+            {% trans "Expiration date" %}
+        </label>
+        <div class="col-sm-4">
+            <div class="hosted-field form-control" id="bt-expiration-date"></div>
+        </div>
+    </div>
+    <div class="form-group braintree-cvc">
+        <label class="control-label col-sm-3">
+            {% trans "Security code (CVC)" %}
+        </label>
+        <div class="col-sm-2">
+            <div class="hosted-field form-control" id="bt-cvv"></div>
+        </div>
+    </div>
+    <p>
+        <em>{% blocktrans trimmed %}
+            Your payment will be processed by PayPal Inc. Your credit card data will be transmitted directly to
+            Braintree/PayPal and never touches our servers.
+        {% endblocktrans %}</em>
+        <input type="hidden" name="payment_braintree_nonce" value="" id="braintree_nonce" />
+    </p>
+</div>
+<script type="text/plain" id="braintree-token">{{ client_token }}</script>
+<script src="https://js.braintreegateway.com/web/3.12.0/js/client.min.js"></script>
+<script src="https://js.braintreegateway.com/web/3.12.0/js/hosted-fields.min.js"></script>
+{% compress js %}
+    <script type="text/javascript" src="{% static "pretix_braintree/pretix-braintree.js" %}"></script>
+{% endcompress %}
