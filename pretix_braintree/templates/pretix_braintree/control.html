@@ -1,0 +1,41 @@
+{% load i18n %}
+
+{% if payment_info %}
+    {% if order.status == "p" %}
+        <p>{% blocktrans trimmed %}
+            This order has been paid via Braintree.
+        {% endblocktrans %}</p>
+    {% elif order.status == "r" %}
+        <p>{% blocktrans trimmed %}
+            This order has been paid via Braintree and has been marked as refunded.
+        {% endblocktrans %}</p>
+    {% else %}
+        <p>{% blocktrans trimmed %}
+            This order has been planned to be paid via Braintree, but the payment has not yet been completed.
+        {% endblocktrans %}</p>
+    {% endif %}
+    {% if order.status == "p" or order.status == "r" %}
+        <dl class="dl-horizontal">
+            <dt>{% trans "Transaction ID" %}</dt>
+            <dd>{{ payment_info.id }}</dd>
+            <dt>{% trans "Card type" %}</dt>
+            <dd>{{ payment_info.card_type }}</dd>
+            <dt>{% trans "Card number" %}</dt>
+            <dd>{{ payment_info.card_masked_number }}</dd>
+            <dt>{% trans "Amount" %}</dt>
+            <dd>{{ payment_info.amount }}</dd>
+            <dt>{% trans "Status" %}</dt>
+            <dd>{{ payment_info.status }}</dd>
+        </dl>
+    {% endif %}
+    {% if "error" in payment_info %}
+        <dl class="dl-horizontal">
+            <dt>{% trans "Error message" %}</dt>
+            <dd>{{ payment_info.error }}</dd>
+        </dl>
+    {% endif %}
+{% else %}
+    <p>{% blocktrans trimmed %}
+        This order has been planned to be paid via Braintree, but the payment has not yet been completed.
+    {% endblocktrans %}</p>
+{% endif %}

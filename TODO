@@ -1,8 +1,6 @@
 * Overpaid
 * Webhook, refunds
 * Webhook, setteled
-* Cancellations, refunds
 * warn about correct merchant currency
-* display card errors
-* test retry
 * metadata / custom fields
+* test failed settlement

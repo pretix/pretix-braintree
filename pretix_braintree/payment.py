@@ -3,6 +3,7 @@ import logging
 from collections import OrderedDict
 
 import braintree
+from braintree.exceptions.braintree_error import BraintreeError
 from django import forms
 from django.contrib import messages
 from django.template.loader import get_template
@@ -12,9 +13,8 @@ from pretix.base.models import Quota, RequiredAction
 from pretix.base.payment import BasePaymentProvider, PaymentException
 from pretix.base.services.mail import SendMailException
 from pretix.base.services.orders import mark_order_paid, mark_order_refunded
-from pretix.multidomain.urlreverse import build_absolute_uri
 
-logger = logging.getLogger('pretix.plugins.stripe')
+logger = logging.getLogger(__name__)
 
 
 class BraintreeCC(BasePaymentProvider):
@@ -91,6 +91,29 @@ class BraintreeCC(BasePaymentProvider):
     def order_can_retry(self, order):
         return self._is_still_available()
 
+    def _serialize(self, transaction):
+        return {
+            'amount': str(transaction.amount),
+            'card_type': transaction.credit_card_details.card_type if transaction.credit_card_details else None,
+            'card_masked_number': (transaction.credit_card_details.masked_number
+                                   if transaction.credit_card_details else None),
+            'gateway_rejection_reason': transaction.gateway_rejection_reason,
+            'id': transaction.id,
+            'merchant_account_id': transaction.merchant_account_id,
+            'order_id': transaction.order_id,
+            'payment_instrument_type': transaction.payment_instrument_type,
+            'processor_response_code': transaction.processor_response_code,
+            'processor_response_text': transaction.processor_response_text,
+            'processor_settlement_response_code': transaction.processor_settlement_response_code,
+            'processor_settlement_response_text': transaction.processor_settlement_response_text,
+            'refund_ids': transaction.refund_ids,
+            'status': transaction.status,
+            'type': transaction.type,
+            'updated_at': transaction.updated_at.isoformat(),
+            'created_at': transaction.created_at.isoformat(),
+
+        }
+
     def payment_perform(self, request, order) -> str:
         self._init_api()
         result = braintree.Transaction.sale({
@@ -102,7 +125,7 @@ class BraintreeCC(BasePaymentProvider):
         })
         if result.is_success:
             try:
-                mark_order_paid(order, self.identifier, result.transaction.id)
+                mark_order_paid(order, self.identifier, json.dumps(self._serialize(result.transaction)))
             except Quota.QuotaExceededException as e:
                 RequiredAction.objects.create(
                     event=request.event, action_type='pretix_braintree.overpaid', data=json.dumps({
@@ -114,7 +137,14 @@ class BraintreeCC(BasePaymentProvider):
             except SendMailException:
                 raise PaymentException(_('There was an error sending the confirmation mail.'))
         else:
-            raise PaymentException(str(result.deep_errors))
+            if result.transaction:
+                order.payment_info = json.dumps(self._serialize(result.transaction))
+            else:
+                order.payment_info = json.dumps({'error': result.message})
+            order.save()
+            raise PaymentException(
+                _('Your payment failed because Braintree reported the following error: %s') % str(result.message)
+            )
 
         del request.session['payment_braintree_nonce']
 
@@ -123,7 +153,7 @@ class BraintreeCC(BasePaymentProvider):
             payment_info = json.loads(order.payment_info)
         else:
             payment_info = None
-        template = get_template('pretixplugins/stripe/pending.html')
+        template = get_template('pretix_braintree/pending.html')
         ctx = {'request': request, 'event': self.event, 'settings': self.settings,
                'order': order, 'payment_info': payment_info}
         return template.render(ctx)
@@ -131,11 +161,9 @@ class BraintreeCC(BasePaymentProvider):
     def order_control_render(self, request, order) -> str:
         if order.payment_info:
             payment_info = json.loads(order.payment_info)
-            if 'amount' in payment_info:
-                payment_info['amount'] /= 100
         else:
             payment_info = None
-        template = get_template('pretixplugins/stripe/control.html')
+        template = get_template('pretix_braintree/control.html')
         ctx = {'request': request, 'event': self.event, 'settings': self.settings,
                'payment_info': payment_info, 'order': order}
         return template.render(ctx)
@@ -151,32 +179,37 @@ class BraintreeCC(BasePaymentProvider):
         else:
             payment_info = None
 
-        if not payment_info:
+        if not payment_info or 'id' not in payment_info:
             mark_order_refunded(order, user=request.user)
             messages.warning(request, _('We were unable to transfer the money back automatically. '
                                         'Please get in touch with the customer and transfer it back manually.'))
             return
 
         try:
-            ch = stripe.Charge.retrieve(payment_info['id'])
-            ch.refunds.create()
-            ch.refresh()
-        except (stripe.error.InvalidRequestError, stripe.error.AuthenticationError, stripe.error.APIConnectionError) \
-                as e:
-            if e.json_body:
-                err = e.json_body['error']
-                logger.exception('Stripe error: %s' % str(err))
+            transaction = braintree.Transaction.find(payment_info['id'])
+            if transaction.status in ("authorized", "submitted_for_settlement"):
+                result = braintree.Transaction.void(payment_info['id'])
+            elif transaction.status in ("settled", "settling"):
+                result = braintree.Transaction.refund(payment_info['id'])
             else:
-                err = {'message': str(e)}
-                logger.exception('Stripe error: %s' % str(e))
-            messages.error(request, _('We had trouble communicating with Stripe. Please try again and contact '
-                                      'support if the problem persists.'))
-            logger.error('Stripe error: %s' % str(err))
-        except stripe.error.StripeError:
+                mark_order_refunded(order, user=request.user)
+                logger.warning('Braintree refund of invalid state requested: %s' % transaction.status)
+                messages.warning(request, _('We were unable to transfer the money back automatically. '
+                                            'Please get in touch with the customer and transfer it back manually.'))
+                return
+
+            if result.is_success:
+                transaction = braintree.Transaction.find(payment_info['id'])
+                order = mark_order_refunded(order, user=request.user)
+                order.payment_info = json.dumps(self._serialize(transaction))
+                order.save()
+            else:
+                order = mark_order_refunded(order, user=request.user)
+                logger.warning('Braintree refund/void failed: %s' % result.message)
+                messages.warning(request, _('We were unable to transfer the money back automatically. '
+                                            'Please get in touch with the customer and transfer it back manually.'))
+        except BraintreeError as e:
+            logger.exception('Braintree error: %s' % str(e))
             mark_order_refunded(order, user=request.user)
             messages.warning(request, _('We were unable to transfer the money back automatically. '
                                         'Please get in touch with the customer and transfer it back manually.'))
-        else:
-            order = mark_order_refunded(order, user=request.user)
-            order.payment_info = str(ch)
-            order.save()

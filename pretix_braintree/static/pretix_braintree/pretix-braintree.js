@@ -43,14 +43,17 @@ $(function () {
                 },
                 function (hostedFieldsErr, hostedFieldsInstance) {
                     if (hostedFieldsErr) {
-                        // Handle error in Hosted Fields creation
+                        console.error(hostedFieldsErr);
+                        $(".braintree-errors").stop().hide().removeClass("sr-only");
+                        $(".braintree-errors").html("<div class='alert alert-danger'>" + hostedFieldsErr.message + "</div>");
+                        $(".braintree-errors").slideDown();
                         return;
                     }
 
                     $("#braintree_nonce").parents("form").submit(
                         function () {
                             if (($("input[name=payment][value=braintreecc]").prop('checked') || $("input[name=payment]").length === 0)
-                                && $("#stripe_token").val() === "") {
+                                && $("#braintree_nonce").val() === "") {
 
                                 waitingDialog.show(gettext("Contacting Braintree …"));
                                 event.preventDefault();
@@ -58,9 +61,9 @@ $(function () {
                                 hostedFieldsInstance.tokenize(function (tokenizeErr, payload) {
                                     waitingDialog.hide();
                                     if (tokenizeErr) {
-                                        console.error(tokenizeErr.message);
+                                        console.error(tokenizeErr);
                                         $(".braintree-errors").stop().hide().removeClass("sr-only");
-                                        $(".braintree-errors").html("<div class='alert alert-danger'>" + tokenizeErr + "</div>");
+                                        $(".braintree-errors").html("<div class='alert alert-danger'>" + tokenizeErr.message + "</div>");
                                         $(".braintree-errors").slideDown();
                                         return;
                                     }
